@@ -7,6 +7,7 @@ use std::collections::BTreeMap as Map;
 use std::convert::TryInto;
 use std::io::IoSlice;
 use std::io::IoSliceMut;
+use std::os::raw::c_void;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -373,6 +374,58 @@ pub trait RutabagaComponent {
     fn resume(&self) -> RutabagaResult<()> {
         Ok(())
     }
+
+    fn setup_native_surface(
+        &self,
+        _display_id: u32,
+        _native_window_handle: *mut c_void,
+        _width_pt: i32,
+        _height_pt: i32,
+        _width_px: i32,
+        _height_px: i32,
+        _dpr: f32,
+    ) -> RutabagaResult<()> {
+        Err(MesaError::Unsupported.into())
+    }
+
+    fn teardown_native_surface(&self, _display_id: u32) -> RutabagaResult<()> {
+        Err(MesaError::Unsupported.into())
+    }
+
+    fn resize_native_surface(
+        &self,
+        _display_id: u32,
+        _width_pt: i32,
+        _height_pt: i32,
+        _width_px: i32,
+        _height_px: i32,
+        _dpr: f32,
+    ) -> RutabagaResult<()> {
+        Err(MesaError::Unsupported.into())
+    }
+
+    fn set_vsync_hz(&self, _vsync_hz: u32) {}
+
+    fn set_scanout_resource(
+        &self,
+        _scanout_id: u32,
+        _resource_id: u32,
+        _width: u32,
+        _height: u32,
+    ) -> RutabagaResult<()> {
+        Err(MesaError::Unsupported.into())
+    }
+
+    fn present_flushed_resource(
+        &self,
+        _resource_id: u32,
+        _x: u32,
+        _y: u32,
+        _width: u32,
+        _height: u32,
+    ) -> RutabagaResult<bool> {
+        Err(MesaError::Unsupported.into())
+    }
 }
 
 pub trait RutabagaContext {
@@ -645,6 +698,95 @@ impl Rutabaga {
             .ok_or(RutabagaError::InvalidComponent)?;
 
         component.resume()
+    }
+
+    pub fn setup_native_surface(
+        &self,
+        display_id: u32,
+        native_window_handle: *mut c_void,
+        width_pt: i32,
+        height_pt: i32,
+        width_px: i32,
+        height_px: i32,
+        dpr: f32,
+    ) -> RutabagaResult<()> {
+        let component = self
+            .components
+            .get(&self.default_component)
+            .ok_or(RutabagaError::InvalidComponent)?;
+
+        component.setup_native_surface(
+            display_id,
+            native_window_handle,
+            width_pt,
+            height_pt,
+            width_px,
+            height_px,
+            dpr,
+        )
+    }
+
+    pub fn teardown_native_surface(&self, display_id: u32) -> RutabagaResult<()> {
+        let component = self
+            .components
+            .get(&self.default_component)
+            .ok_or(RutabagaError::InvalidComponent)?;
+
+        component.teardown_native_surface(display_id)
+    }
+
+    pub fn resize_native_surface(
+        &self,
+        display_id: u32,
+        width_pt: i32,
+        height_pt: i32,
+        width_px: i32,
+        height_px: i32,
+        dpr: f32,
+    ) -> RutabagaResult<()> {
+        let component = self
+            .components
+            .get(&self.default_component)
+            .ok_or(RutabagaError::InvalidComponent)?;
+
+        component.resize_native_surface(display_id, width_pt, height_pt, width_px, height_px, dpr)
+    }
+
+    pub fn set_vsync_hz(&self, vsync_hz: u32) {
+        if let Some(component) = self.components.get(&self.default_component) {
+            component.set_vsync_hz(vsync_hz);
+        }
+    }
+
+    pub fn set_scanout_resource(
+        &self,
+        scanout_id: u32,
+        resource_id: u32,
+        width: u32,
+        height: u32,
+    ) -> RutabagaResult<()> {
+        let component = self
+            .components
+            .get(&self.default_component)
+            .ok_or(RutabagaError::InvalidComponent)?;
+
+        component.set_scanout_resource(scanout_id, resource_id, width, height)
+    }
+
+    pub fn present_flushed_resource(
+        &self,
+        resource_id: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> RutabagaResult<bool> {
+        let component = self
+            .components
+            .get(&self.default_component)
+            .ok_or(RutabagaError::InvalidComponent)?;
+
+        component.present_flushed_resource(resource_id, x, y, width, height)
     }
 
     fn capset_id_to_component_type(&self, capset_id: u32) -> RutabagaResult<RutabagaComponentType> {
@@ -1281,6 +1423,8 @@ pub struct RutabagaBuilder {
     fence_handler: RutabagaFenceHandler,
     display_width: u32,
     display_height: u32,
+    display_width_mm: Option<u32>,
+    display_height_mm: Option<u32>,
     default_component: RutabagaComponentType,
     gfxstream_flags: GfxstreamFlags,
     virglrenderer_flags: VirglRendererFlags,
@@ -1288,6 +1432,8 @@ pub struct RutabagaBuilder {
     paths: Option<RutabagaPaths>,
     debug_handler: Option<RutabagaDebugHandler>,
     renderer_features: Option<String>,
+    gfxstream_vm_ops: Option<*const c_void>,
+    gfxstream_address_space_hw_funcs: Option<*const c_void>,
     server_descriptor: Option<OwnedDescriptor>,
 }
 
@@ -1302,6 +1448,8 @@ impl RutabagaBuilder {
             fence_handler,
             display_width: RUTABAGA_DEFAULT_WIDTH,
             display_height: RUTABAGA_DEFAULT_HEIGHT,
+            display_width_mm: None,
+            display_height_mm: None,
             default_component: RutabagaComponentType::NoneSelected,
             gfxstream_flags,
             virglrenderer_flags,
@@ -1309,6 +1457,8 @@ impl RutabagaBuilder {
             paths: None,
             debug_handler: None,
             renderer_features: None,
+            gfxstream_vm_ops: None,
+            gfxstream_address_space_hw_funcs: None,
             server_descriptor: None,
         }
     }
@@ -1322,6 +1472,18 @@ impl RutabagaBuilder {
     /// Set display height for the RutabagaBuilder
     pub fn set_display_height(mut self, display_height: u32) -> RutabagaBuilder {
         self.display_height = display_height;
+        self
+    }
+
+    /// Set physical display width in millimeters for the RutabagaBuilder
+    pub fn set_display_width_mm(mut self, display_width_mm: u32) -> RutabagaBuilder {
+        self.display_width_mm = Some(display_width_mm);
+        self
+    }
+
+    /// Set physical display height in millimeters for the RutabagaBuilder
+    pub fn set_display_height_mm(mut self, display_height_mm: u32) -> RutabagaBuilder {
+        self.display_height_mm = Some(display_height_mm);
         self
     }
 
@@ -1402,6 +1564,24 @@ impl RutabagaBuilder {
     /// Set renderer features for the RutabagaBuilder
     pub fn set_renderer_features(mut self, renderer_features: Option<String>) -> RutabagaBuilder {
         self.renderer_features = renderer_features;
+        self
+    }
+
+    /// Set opaque gfxstream VM ops for the RutabagaBuilder.
+    pub fn set_gfxstream_vm_ops(
+        mut self,
+        gfxstream_vm_ops: Option<*const c_void>,
+    ) -> RutabagaBuilder {
+        self.gfxstream_vm_ops = gfxstream_vm_ops;
+        self
+    }
+
+    /// Set opaque gfxstream address-space HW funcs for the RutabagaBuilder.
+    pub fn set_gfxstream_address_space_hw_funcs(
+        mut self,
+        gfxstream_address_space_hw_funcs: Option<*const c_void>,
+    ) -> RutabagaBuilder {
+        self.gfxstream_address_space_hw_funcs = gfxstream_address_space_hw_funcs;
         self
     }
 
@@ -1510,8 +1690,12 @@ impl RutabagaBuilder {
                 let gfxstream = Gfxstream::init(
                     self.display_width,
                     self.display_height,
+                    self.display_width_mm,
+                    self.display_height_mm,
                     self.gfxstream_flags,
                     self.renderer_features,
+                    self.gfxstream_vm_ops,
+                    self.gfxstream_address_space_hw_funcs,
                     self.fence_handler.clone(),
                     self.debug_handler.clone(),
                 )?;
